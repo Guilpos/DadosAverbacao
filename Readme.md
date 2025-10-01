@@ -1,0 +1,1 @@
+Programa que calcula dados de averbação baseado em alocação de valroes
