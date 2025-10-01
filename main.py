@@ -1,19 +1,70 @@
 import pandas as pd
 import openpyxl
 import numpy as np
+import tkinter as tk
+from tkinter import filedialog
+
+def selecionar_arquivo(titulo="Selecione um arquivo", multiplos=False):
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes('-topmost', True)
+
+    if multiplos:
+        arquivos = filedialog.askopenfilenames(
+            title=titulo,
+            filetypes=[("Arquivos Excel", "*.xlsx *.xls *.csv"), ("Todos os arquivos", "*.*")]
+        )
+        root.destroy()
+        return list(arquivos)
+    else:
+        arquivo = filedialog.askopenfilename(
+            title=titulo,
+            filetypes=[("Arquivos Excel", "*.xlsx *.xls *.csv"), ("Todos os arquivos", "*.*")]
+        )
+        root.destroy()
+        return arquivo
+
+
+def selecionar_pasta(titulo="Selecione uma pasta"):
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes('-topmost', True)
+    pasta = filedialog.askdirectory(title=titulo)
+    root.destroy()
+    if not pasta:
+        return None
+    return pasta
+
+def selecionar_com_validacao(titulo, extensao_correta):
+    while True:
+        arquivo = selecionar_arquivo(titulo)
+        if not arquivo:  # usuário cancelou ou fechou
+            return None
+        if arquivo.lower().endswith(extensao_correta):
+            return arquivo
+        else:
+            print(f"Arquivo inválido! Selecione um arquivo com extensão {extensao_correta}")
+
+
 
 # --- CONFIGURAÇÃO ---
 # Credbase trabalhado
-credbase_trabalhado = r"Z:\Python\DadosAverbacao\geral\CREDBASE TRABALHADO UNIFICADO GOV MA 09.2025.xlsx"
+# credbase_trabalhado = r"Z:\Python\DadosAverbacao\geral\CREDBASE TRABALHADO UNIFICADO GOV MA 09.2025.xlsx"
+credbase_trabalhado = selecionar_com_validacao(r"Selecione o Credbase Trabalhado", 'xlsx')
 
 # Conciliação são os dados averbados
-conciliacao_bruto = r"Z:\Python\DadosAverbacao\geral\Conciliação-Governo do Maranhão - 092025.xlsx"
+# conciliacao_bruto = r"Z:\Python\DadosAverbacao\geral\Conciliação-Governo do Maranhão - 092025.xlsx"
+conciliacao_bruto = selecionar_com_validacao(r"Selecione o arquivo de Conciliação bruto", "xlsx")
 
 # D8 Geral do convenio
-planilha_d8_geral = r"Z:\Python\DadosAverbacao\geral\MA_D8 GERAL.CSV"
+# planilha_d8_geral = r"Z:\Python\DadosAverbacao\geral\MA_D8 GERAL.CSV"
+planilha_d8_geral = selecionar_com_validacao(r"Selecione a planilha geral de D8", "csv")
 
 # D8 apenas para os casos de cartão
-planilha_d8 = r"Z:\Python\DadosAverbacao\geral\D8 GOV MA.csv"
+# planilha_d8 = r"Z:\Python\DadosAverbacao\geral\D8 GOV MA.csv"
+planilha_d8 = selecionar_com_validacao(r"Selecione o arquivo de retorno unificado do convênio", "csv")
+
+folder = selecionar_pasta('Insira o caminho de saída')
 
 
 # --------------------
@@ -62,6 +113,7 @@ def separacao_conciliacao(credbase, conciliacao):
 
 
 def prepara_cartao(retorno, d8_tudo):
+    print('Iniciando...')
     df_retorno = pd.read_csv(retorno, encoding="ISO-8859-1",sep=";", on_bad_lines="skip")
 
     d8_geral = pd.read_csv(d8_tudo, encoding="ISO-8859-1",sep=";", on_bad_lines="skip")
@@ -81,7 +133,7 @@ def prepara_cartao(retorno, d8_tudo):
     # Renomeia as colunas
     retorno_filtrado.columns = ["MATRÍCULA", "CPF", "PARCELA", "ADE"]
 
-    conciliacao_contratos_encontrados.to_excel(fr'Z:\Python\DadosAverbacao\CONCILIACAO_TESTE.xlsx', index=False)
+    conciliacao_contratos_encontrados.to_excel(fr'{folder}\CONCILIACAO_TESTE.xlsx', index=False)
 
     ades_usadas_cartao = processar_alocacao_ade(conciliacao_contratos_encontrados, retorno_filtrado, 'CARTÃO')
     total_ades_usadas.extend(ades_usadas_cartao)
@@ -280,8 +332,8 @@ def processar_alocacao_ade(dados, d8, modalidade):
     df_resultado = pd.DataFrame(dados_resultado)
 
     # Salva o resultado em uma nova planilha no mesmo arquivo Excel
-    df_resultado.to_excel(fr"Z:\Python\DadosAverbacao\Dados de Averbacao Tratado {modalidade}.xlsx", index=False)
-    d8.to_excel(r'Z:\Python\DadosAverbacao\geral\D8 ROBO.xlsx', index=False)
+    df_resultado.to_excel(fr"{folder}\Dados de Averbacao Tratado {modalidade}.xlsx", index=False)
+    d8.to_excel(fr'{folder}\D8 ROBO.xlsx', index=False)
 
     print(f"Processo  de {modalidade} concluído com sucesso! Verifique a planilha 'Dados de Averbacao Tratado {modalidade}' no seu arquivo.")
 
