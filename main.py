@@ -3,6 +3,10 @@ import openpyxl
 import numpy as np
 import tkinter as tk
 from tkinter import filedialog
+from MetodoSoma import metodo_soma
+
+
+files_list = []
 
 def selecionar_arquivo(titulo="Selecione um arquivo", multiplos=False):
     root = tk.Tk()
@@ -48,24 +52,20 @@ def selecionar_com_validacao(titulo, extensao_correta):
 
 
 # --- CONFIGURAÇÃO ---
+
 # Credbase trabalhado
-# credbase_trabalhado = r"Z:\Python\DadosAverbacao\geral\CREDBASE TRABALHADO UNIFICADO GOV MA 09.2025.xlsx"
 credbase_trabalhado = selecionar_com_validacao(r"Selecione o Credbase Trabalhado", 'xlsx')
 
 # Conciliação são os dados averbados
-# conciliacao_bruto = r"Z:\Python\DadosAverbacao\geral\Conciliação-Governo do Maranhão - 092025.xlsx"
 conciliacao_bruto = selecionar_com_validacao(r"Selecione o arquivo de Conciliação bruto", "xlsx")
 
 # D8 Geral do convenio
-# planilha_d8_geral = r"Z:\Python\DadosAverbacao\geral\MA_D8 GERAL.CSV"
 planilha_d8_geral = selecionar_com_validacao(r"Selecione a planilha geral de D8", "csv")
 
 # D8 apenas para os casos de cartão
-# planilha_d8 = r"Z:\Python\DadosAverbacao\geral\D8 GOV MA.csv"
 planilha_d8 = selecionar_com_validacao(r"Selecione o arquivo de retorno unificado do convênio", "csv")
 
 folder = selecionar_pasta('Insira o caminho de saída')
-
 
 # --------------------
 
@@ -84,7 +84,7 @@ def separacao_conciliacao(credbase, conciliacao):
 
     # 1. Selecionar colunas com "d8" no nome e somar por linha (axis=1)
     # "D8 " precisa ficar com espaço para que a coluna "CONVENIO D8" não atrapalhe na hora da soma
-    colunas_d8 = conciliacao_atratar.filter(like='D8 ').columns
+    colunas_d8 = conciliacao_atratar.filter(regex=r'^(?!.*PRODUTO)D8').columns
     for col in colunas_d8:
         tipos = conciliacao_atratar[col].apply(type).value_counts()
         '''print(f"Coluna {col}:")
@@ -92,7 +92,7 @@ def separacao_conciliacao(credbase, conciliacao):
         print()'''
     conciliacao_atratar[colunas_d8] = conciliacao_atratar[colunas_d8].apply(pd.to_numeric, errors='coerce')
 
-    soma_d8 = conciliacao_atratar.filter(like='D8 ').sum(axis=1)
+    soma_d8 = conciliacao_atratar.filter(regex=r'^(?!.*PRODUTO)D8').sum(axis=1)
 
     # 2. Calcular prestação * prazo
     prestacao_vezes_prazo = conciliacao_atratar['PRESTAÇÃO'] * conciliacao_atratar['PRAZO']
@@ -121,7 +121,7 @@ def prepara_cartao(retorno, d8_tudo):
     conciliacao = separacao_conciliacao(credbase_trabalhado, conciliacao_bruto)
 
     conciliacao_contratos_encontrados = conciliacao.loc[conciliacao['Lançou'] == 1,
-    ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA']]
+    ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO', 'Lançou']]
 
     conciliacao_contratos_encontrados = conciliacao_contratos_encontrados.sort_values(by=['CPF', 'AVERBAÇÃO - ATUALIZADA'], ascending=True)
 
@@ -140,20 +140,25 @@ def prepara_cartao(retorno, d8_tudo):
 
     # Filtra o d8_geral_df UMA ÚLTIMA VEZ para garantir que temos o estado mais recente
     d8_final_restante = d8_geral[~d8_geral['Contrato'].isin(total_ades_usadas)]
-    prepara_emprestimo(d8_final_restante)
 
-def prepara_emprestimo(geral_d8):
+    # Armazenamos as ADEs que achamos no metodo soma
+    conciliacao_metodo_soma = metodo_soma(conciliacao, d8_final_restante, folder)
+
+    d8_final_restante_soma = d8_final_restante[~d8_final_restante['Contrato'].isin(conciliacao_metodo_soma['ADE'])]
+    prepara_emprestimo(d8_final_restante_soma, conciliacao_metodo_soma)
+
+def prepara_emprestimo(geral_d8, conciliacao_soma_exata):
     d8_geral = geral_d8
     d8_geral_reduzido = d8_geral.loc[d8_geral['Serviço'] == 'Empréstimo Consignado',['Matrícula', 'CPF', 'Nome', 'Contrato', 'Serviço', 'Valor original']]
 
     d8_geral_colunas_novas = d8_geral_reduzido.rename(columns={'Matrícula': 'MATRÍCULA', 'Nome': 'NOME', 'Contrato': 'ADE', 'Valor original': 'PARCELA'})
 
-    conciliacao = separacao_conciliacao(credbase_trabalhado, conciliacao_bruto)
+    conciliacao = conciliacao_soma_exata
 
     total_ades_usadas = []
 
     conciliacao_encontrados = conciliacao.loc[conciliacao['PRODUTO'] == 'Empréstimo',
-    ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA']]
+    ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO', 'Lançou']]
 
     ades_usadas_cartao = processar_alocacao_ade(conciliacao_encontrados, d8_geral_colunas_novas, 'EMPRÉSTIMO')
 
@@ -161,19 +166,19 @@ def prepara_emprestimo(geral_d8):
 
     # Filtra o d8_geral_df UMA ÚLTIMA VEZ para garantir que temos o estado mais recente
     d8_final_restante = d8_geral[~d8_geral['Contrato'].isin(total_ades_usadas)]
-    prepara_beneficio(d8_final_restante)
+    prepara_beneficio(d8_final_restante, conciliacao_soma_exata)
 
-def prepara_beneficio(geral_d8):
+def prepara_beneficio(geral_d8, conciliacao_soma_exata):
     d8_geral = geral_d8
     d8_geral_reduzido = d8_geral.loc[d8_geral['Serviço'] == 'Cartão Benefício',['Matrícula', 'CPF', 'Nome', 'Contrato', 'Serviço', 'Valor original']]
 
     d8_geral_colunas_novas = d8_geral_reduzido.rename(columns={'Matrícula': 'MATRÍCULA', 'Nome': 'NOME', 'Contrato': 'ADE', 'Valor original': 'PARCELA'})
 
-    conciliacao = separacao_conciliacao(credbase_trabalhado, conciliacao_bruto)
+    conciliacao = conciliacao_soma_exata
     total_ades_usadas = []
 
     conciliacao_encontrados = conciliacao.loc[conciliacao['PRODUTO'] == 'Cartão Benefício',
-    ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA']]
+    ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO', 'Lançou']]
 
     ades_usadas_cartao = processar_alocacao_ade(conciliacao_encontrados, d8_geral_colunas_novas, 'CARTÃO BENEFÍCIO')
 
@@ -181,20 +186,20 @@ def prepara_beneficio(geral_d8):
 
     # Filtra o d8_geral_df UMA ÚLTIMA VEZ para garantir que temos o estado mais recente
     d8_final_restante = d8_geral[~d8_geral['Contrato'].isin(total_ades_usadas)]
-    prepara_cartao_nao_lancado(d8_final_restante)
+    prepara_cartao_nao_lancado(d8_final_restante, conciliacao_soma_exata)
 
 
-def prepara_cartao_nao_lancado(geral_d8):
+def prepara_cartao_nao_lancado(geral_d8, conciliacao_soma_exata):
     d8_geral = geral_d8
     d8_geral_reduzido = d8_geral.loc[d8_geral['Serviço'] == 'Cartão de Crédito',['Matrícula', 'CPF', 'Nome', 'Contrato', 'Serviço', 'Valor original']]
 
     d8_geral_colunas_novas = d8_geral_reduzido.rename(columns={'Matrícula': 'MATRÍCULA', 'Nome': 'NOME', 'Contrato': 'ADE', 'Valor original': 'PARCELA'})
 
-    conciliacao = separacao_conciliacao(credbase_trabalhado, conciliacao_bruto)
+    conciliacao = conciliacao_soma_exata
     total_ades_usadas = []
 
     mask_credito_nao_lancado = (conciliacao['PRODUTO'] == 'Cartão de Crédito') & (conciliacao['Lançou'] != 1)
-    conciliacao_encontrados = conciliacao.loc[mask_credito_nao_lancado, ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA']]
+    conciliacao_encontrados = conciliacao.loc[mask_credito_nao_lancado, ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO', 'Lançou']]
 
 
     ades_usadas_cartao = processar_alocacao_ade(conciliacao_encontrados, d8_geral_colunas_novas, 'CARTÃO NÃO LANÇADO')
@@ -204,9 +209,9 @@ def prepara_cartao_nao_lancado(geral_d8):
     # Filtra o d8_geral_df UMA ÚLTIMA VEZ para garantir que temos o estado mais recente
     d8_final_restante = d8_geral[~d8_geral['Contrato'].isin(total_ades_usadas)]
 
-    prepara_resto(d8_final_restante)
+    prepara_resto(d8_final_restante, conciliacao_soma_exata)
 
-def prepara_resto(geral_d8):
+def prepara_resto(geral_d8, conciliacao_soma_exata):
     d8_geral = geral_d8
     d8_geral_reduzido = d8_geral.loc[
         d8_geral['Serviço'] == 'Cartão de Crédito', ['Matrícula', 'CPF', 'Nome', 'Contrato', 'Serviço',
@@ -215,18 +220,18 @@ def prepara_resto(geral_d8):
     d8_geral_colunas_novas = d8_geral_reduzido.rename(
         columns={'Matrícula': 'MATRÍCULA', 'Nome': 'NOME', 'Contrato': 'ADE', 'Valor original': 'PARCELA'})
 
-    conciliacao = separacao_conciliacao(credbase_trabalhado, conciliacao_bruto)
+    conciliacao = conciliacao_soma_exata
     total_ades_usadas = []
 
     conciliacao_encontrados = conciliacao.loc[conciliacao['PRODUTO'] == '-',
-    ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA']]
+    ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO', 'Lançou']]
 
     ades_usadas_cartao = processar_alocacao_ade(conciliacao_encontrados, d8_geral_colunas_novas, 'RESTO')
 
     total_ades_usadas.extend(ades_usadas_cartao)
 
-    # Filtra o d8_geral_df UMA ÚLTIMA VEZ para garantir que temos o estado mais recente
-    d8_final_restante = d8_geral[~d8_geral['Contrato'].isin(total_ades_usadas)]
+    # Junta todos os DataFrames
+    concatena_resultados()
 
 def processar_alocacao_ade(dados, d8, modalidade):
     """
@@ -332,13 +337,22 @@ def processar_alocacao_ade(dados, d8, modalidade):
     df_resultado = pd.DataFrame(dados_resultado)
 
     # Salva o resultado em uma nova planilha no mesmo arquivo Excel
-    df_resultado.to_excel(fr"{folder}\Dados de Averbacao Tratado {modalidade}.xlsx", index=False)
+    nome_arquivo = fr"{folder}\Dados de Averbacao Tratado {modalidade}.xlsx"
+    df_resultado.to_excel(nome_arquivo, index=False)
+    files_list.append(nome_arquivo)
     d8.to_excel(fr'{folder}\D8 ROBO.xlsx', index=False)
 
     print(f"Processo  de {modalidade} concluído com sucesso! Verifique a planilha 'Dados de Averbacao Tratado {modalidade}' no seu arquivo.")
 
     # NOVO: Retorna a lista de ADEs
     return list(ades_utilizadas)
+
+# Funcao que concatena todos os arquivos
+def concatena_resultados():
+    df_averbacao_unficada = pd.concat([pd.read_excel(arquivo) for arquivo in files_list], ignore_index=True)
+
+    df_averbacao_unficada.to_excel(fr'{folder}\DADOS DE AVERBAÇÃO UNIFICADAS.xlsx', index=False)
+
 
 # Executa a função principal
 if __name__ == "__main__":
