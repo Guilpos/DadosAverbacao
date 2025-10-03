@@ -6,14 +6,16 @@ import math
 
 files_list = []
 
+
 def metodo_soma(conciliacao, d8, folder):
+    total_ades_usadas = []
 
     def soma_cpf_emprestimo(conciliacao_tratado, d8_geral, caminho):
         d8 = d8_geral[d8_geral['Serviço'] == 'Empréstimo Consignado'].copy()
         # print(f"DF D8: {d8}")
         conciliacao = conciliacao_tratado.copy()
 
-        total_ades_usadas = []
+        # total_ades_usadas = []
 
         conciliacao_encontrados = conciliacao.loc[conciliacao['PRODUTO'] == 'Empréstimo', ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO', 'Lançou']]
 
@@ -30,7 +32,7 @@ def metodo_soma(conciliacao, d8, folder):
         d8 = d8_geral[d8_geral['Serviço'] == 'Cartão Benefício'].copy()
         conciliacao = conciliacao_tratado.copy()
 
-        total_ades_usadas = []
+        # total_ades_usadas = []
 
         conciliacao_encontrados = conciliacao.loc[
             conciliacao['PRODUTO'] == 'Cartão Benefício', ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO']]
@@ -48,7 +50,7 @@ def metodo_soma(conciliacao, d8, folder):
         d8 = d8_geral[d8_geral['Serviço'] == 'Cartão de Crédito'].copy()
         conciliacao = conciliacao_tratado.copy()
 
-        total_ades_usadas = []
+        # total_ades_usadas = []
 
         conciliacao_encontrados = conciliacao.loc[
             conciliacao['PRODUTO'] == 'Cartão de Crédito', ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO',
@@ -66,7 +68,7 @@ def metodo_soma(conciliacao, d8, folder):
         d8 = d8_geral.copy()
         conciliacao = conciliacao_tratado.copy()
 
-        total_ades_usadas = []
+        # total_ades_usadas = []
 
         conciliacao_encontrados = conciliacao.loc[
             conciliacao['PRODUTO'] == 'Cartão de Crédito', ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO',
@@ -207,4 +209,4 @@ def metodo_soma(conciliacao, d8, folder):
     nome_arquivo_metodo_soma = fr'{folder}\DADOS DE AVERBAÇÃO UNIFICADAS METODO SOMA.xlsx'
     df_averbacao_unficada.to_excel(nome_arquivo_metodo_soma, index=False)
 
-    return df_averbacao_unficada
+    return df_averbacao_unficada, list(total_ades_usadas), list(files_list)

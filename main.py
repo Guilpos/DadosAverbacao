@@ -112,40 +112,88 @@ def separacao_conciliacao(credbase, conciliacao):
     return conciliacao_tratado
 
 
-def prepara_cartao(retorno, d8_tudo):
-    print('Iniciando...')
-    df_retorno = pd.read_csv(retorno, encoding="ISO-8859-1",sep=";", on_bad_lines="skip")
+# --- Assumindo que essas funções já existem em outro lugar do seu código ---
+# def separacao_conciliacao(credbase_trabalhado, conciliacao_bruto): ...
+# def processar_alocacao_ade(dados, d8, produto): -> retorna (lista_ades, dataframe_modificado)
+# def metodo_soma(dados, d8, pasta): ...
+# def prepara_emprestimo(d8_restante, conciliacao_restante): ...
 
-    d8_geral = pd.read_csv(d8_tudo, encoding="ISO-8859-1",sep=";", on_bad_lines="skip")
+total_ades_usadas = []
 
-    conciliacao = separacao_conciliacao(credbase_trabalhado, conciliacao_bruto)
+def prepara_cartao(caminho_retorno_cartao: str,
+                   caminho_d8_geral: str,
+                   ):
+    """
+    Processa a alocação de ADEs para a modalidade 'CARTÃO', utilizando dois métodos
+    e preparando os dados restantes para as próximas etapas.
+    """
+    print("--- INICIANDO ETAPA DE ALOCAÇÃO PARA CARTÃO ---")
 
-    conciliacao_contratos_encontrados = conciliacao.loc[conciliacao['Lançou'] == 1,
-    ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO', 'Lançou']]
+    # ===================================================================
+    # 1. SETUP E CARREGAMENTO DE DADOS (Sem alterações)
+    # ===================================================================
+    print("1. Carregando e preparando os dados iniciais...")
 
-    conciliacao_contratos_encontrados = conciliacao_contratos_encontrados.sort_values(by=['CPF', 'AVERBAÇÃO - ATUALIZADA'], ascending=True)
+    d8_cartao_bruto_df = pd.read_csv(caminho_retorno_cartao, encoding="ISO-8859-1", sep=";", on_bad_lines="skip")
+    conciliacao_base_df = separacao_conciliacao(credbase_trabalhado, conciliacao_bruto)
 
-    total_ades_usadas = []
 
-    # Seleciona as colunas desejadas pelos índices
-    retorno_filtrado = df_retorno.iloc[:, [2, 3, 7, 13]]
+    colunas_relevantes = ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO', 'Lançou']
+    dados_cartao_para_alocar = (
+        conciliacao_base_df.loc[conciliacao_base_df['Lançou'] == 1, colunas_relevantes]
+        .sort_values(by=['CPF', 'AVERBAÇÃO - ATUALIZADA'], ascending=True)
+        .copy()
+    )
 
-    # Renomeia as colunas
-    retorno_filtrado.columns = ["MATRÍCULA", "CPF", "PARCELA", "ADE"]
+    # ===================================================================
+    # 2. MÉTODO 1: ALOCAÇÃO DIRETA (Usando arquivo de retorno de cartão)
+    # ===================================================================
+    print("2. Executando Método 1: Alocação Direta para Cartão...")
 
-    conciliacao_contratos_encontrados.to_excel(fr'{folder}\CONCILIACAO_TESTE.xlsx', index=False)
+    d8_cartao_df = d8_cartao_bruto_df.iloc[:, [2, 3, 7, 13]].copy()
+    d8_cartao_df.columns = ["MATRÍCULA", "CPF", "PARCELA", "ADE"]
 
-    ades_usadas_cartao = processar_alocacao_ade(conciliacao_contratos_encontrados, retorno_filtrado, 'CARTÃO')
-    total_ades_usadas.extend(ades_usadas_cartao)
+    # << --- ALTERAÇÃO AQUI --- >>
+    # A chamada da função agora captura os dois valores retornados: a lista e o DataFrame.
+    lista_ades_metodo_1, resultado_df_metodo_1 = processar_alocacao_ade(
+        dados_cartao_para_alocar, d8_cartao_df, 'CARTÃO'
+    )
 
-    # Filtra o d8_geral_df UMA ÚLTIMA VEZ para garantir que temos o estado mais recente
-    d8_final_restante = d8_geral[~d8_geral['Contrato'].isin(total_ades_usadas)]
+    total_ades_usadas.extend(lista_ades_metodo_1)
 
-    # Armazenamos as ADEs que achamos no metodo soma
-    conciliacao_metodo_soma = metodo_soma(conciliacao, d8_final_restante, folder)
+    soma_exata()
 
-    d8_final_restante_soma = d8_final_restante[~d8_final_restante['Contrato'].isin(conciliacao_metodo_soma['ADE'])]
-    prepara_emprestimo(d8_final_restante_soma, conciliacao_metodo_soma)
+def soma_exata():
+    d8_ades_amenos = pd.read_csv(planilha_d8_geral, encoding="ISO-8859-1", sep=";", on_bad_lines="skip")
+    d8_soma = d8_ades_amenos[~d8_ades_amenos['Contrato'].isin(total_ades_usadas)]
+
+    colunas_relevantes = ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO', 'Lançou']
+
+    conciliacao_base_df = separacao_conciliacao(credbase_trabalhado, conciliacao_bruto)
+    dados_cartao_para_alocar = (
+        conciliacao_base_df.loc[conciliacao_base_df['Lançou'] == 0, colunas_relevantes]
+        .sort_values(by=['CPF', 'AVERBAÇÃO - ATUALIZADA'], ascending=True)
+        .copy()
+    )
+
+    conciliacao_retorno_soma, ades_tulizadas_soma, files_list_soma = metodo_soma(dados_cartao_para_alocar, d8_soma, folder)
+    conciliacao_retorno_soma['ADE'] = conciliacao_retorno_soma['ADE'].fillna('')
+
+    total_ades_usadas.extend(ades_tulizadas_soma)
+    files_list.extend(files_list_soma)
+
+    d8_para_emprestimo = d8_soma[~d8_soma['Contrato'].isin(total_ades_usadas)]
+    conciliacao_para_emprestimo = conciliacao_retorno_soma[conciliacao_retorno_soma['ADE'] == '']
+
+    # Máscara para vazios
+    '''mask_sem_ade = conciliacao_para_emprestimo['ADE'] == ''
+
+    print(f'Quantos Vazios no conciliação_para_emprestimo: {mask_sem_ade.sum()}')'''
+
+    '''print(f'Comprimento D8 SOMA: {len(d8_soma)}')
+    print(f'Comprimento d8_para_emprestimo: {len(d8_para_emprestimo)}')'''
+
+    prepara_emprestimo(d8_para_emprestimo, conciliacao_para_emprestimo)
 
 def prepara_emprestimo(geral_d8, conciliacao_soma_exata):
     d8_geral = geral_d8
@@ -153,14 +201,11 @@ def prepara_emprestimo(geral_d8, conciliacao_soma_exata):
 
     d8_geral_colunas_novas = d8_geral_reduzido.rename(columns={'Matrícula': 'MATRÍCULA', 'Nome': 'NOME', 'Contrato': 'ADE', 'Valor original': 'PARCELA'})
 
-    conciliacao = conciliacao_soma_exata
+    conciliacao = conciliacao_soma_exata.loc[conciliacao_soma_exata['PRODUTO'] == 'Empréstimo', ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO', 'Lançou']].copy()
 
-    total_ades_usadas = []
+    # total_ades_usadas = []
 
-    conciliacao_encontrados = conciliacao.loc[conciliacao['PRODUTO'] == 'Empréstimo',
-    ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO', 'Lançou']]
-
-    ades_usadas_cartao = processar_alocacao_ade(conciliacao_encontrados, d8_geral_colunas_novas, 'EMPRÉSTIMO')
+    ades_usadas_cartao = processar_alocacao_ade(conciliacao, d8_geral_colunas_novas, 'EMPRÉSTIMO')
 
     total_ades_usadas.extend(ades_usadas_cartao)
 
@@ -174,13 +219,13 @@ def prepara_beneficio(geral_d8, conciliacao_soma_exata):
 
     d8_geral_colunas_novas = d8_geral_reduzido.rename(columns={'Matrícula': 'MATRÍCULA', 'Nome': 'NOME', 'Contrato': 'ADE', 'Valor original': 'PARCELA'})
 
-    conciliacao = conciliacao_soma_exata
-    total_ades_usadas = []
+    conciliacao = conciliacao_soma_exata.loc[
+            conciliacao_soma_exata['PRODUTO'] == 'Cartão Benefício', ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO']].copy()
 
-    conciliacao_encontrados = conciliacao.loc[conciliacao['PRODUTO'] == 'Cartão Benefício',
-    ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO', 'Lançou']]
+    # total_ades_usadas = []
 
-    ades_usadas_cartao = processar_alocacao_ade(conciliacao_encontrados, d8_geral_colunas_novas, 'CARTÃO BENEFÍCIO')
+
+    ades_usadas_cartao = processar_alocacao_ade(conciliacao, d8_geral_colunas_novas, 'CARTÃO BENEFÍCIO')
 
     total_ades_usadas.extend(ades_usadas_cartao)
 
@@ -195,11 +240,13 @@ def prepara_cartao_nao_lancado(geral_d8, conciliacao_soma_exata):
 
     d8_geral_colunas_novas = d8_geral_reduzido.rename(columns={'Matrícula': 'MATRÍCULA', 'Nome': 'NOME', 'Contrato': 'ADE', 'Valor original': 'PARCELA'})
 
-    conciliacao = conciliacao_soma_exata
-    total_ades_usadas = []
+    conciliacao = conciliacao_soma_exata.loc[
+            conciliacao_soma_exata['PRODUTO'] == 'Cartão de Crédito', ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO',
+                                                           'AVERBAÇÃO - ATUALIZADA', 'PRODUTO', 'Lançou']].copy()
+    # total_ades_usadas = []
 
     mask_credito_nao_lancado = (conciliacao['PRODUTO'] == 'Cartão de Crédito') & (conciliacao['Lançou'] != 1)
-    conciliacao_encontrados = conciliacao.loc[mask_credito_nao_lancado, ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO', 'Lançou']]
+    conciliacao_encontrados = conciliacao.loc[mask_credito_nao_lancado]
 
 
     ades_usadas_cartao = processar_alocacao_ade(conciliacao_encontrados, d8_geral_colunas_novas, 'CARTÃO NÃO LANÇADO')
@@ -221,7 +268,7 @@ def prepara_resto(geral_d8, conciliacao_soma_exata):
         columns={'Matrícula': 'MATRÍCULA', 'Nome': 'NOME', 'Contrato': 'ADE', 'Valor original': 'PARCELA'})
 
     conciliacao = conciliacao_soma_exata
-    total_ades_usadas = []
+    # total_ades_usadas = []
 
     conciliacao_encontrados = conciliacao.loc[conciliacao['PRODUTO'] == '-',
     ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO', 'Lançou']]
@@ -344,8 +391,8 @@ def processar_alocacao_ade(dados, d8, modalidade):
 
     print(f"Processo  de {modalidade} concluído com sucesso! Verifique a planilha 'Dados de Averbacao Tratado {modalidade}' no seu arquivo.")
 
-    # NOVO: Retorna a lista de ADEs
-    return list(ades_utilizadas)
+    # NOVO: Retorna a lista de ADEs e o df_resultado
+    return list(ades_utilizadas), df_resultado
 
 # Funcao que concatena todos os arquivos
 def concatena_resultados():
