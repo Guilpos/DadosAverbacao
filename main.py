@@ -4,6 +4,7 @@ import numpy as np
 import tkinter as tk
 from tkinter import filedialog
 from MetodoSoma import metodo_soma
+from TrataContratos import trata_contratos
 
 
 files_list = []
@@ -169,6 +170,8 @@ def soma_exata():
 
     colunas_relevantes = ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO', 'Lançou']
 
+    # prepara a conciliação separando apenas as colunas que vamos usar
+
     conciliacao_base_df = separacao_conciliacao(credbase_trabalhado, conciliacao_bruto)
     dados_cartao_para_alocar = (
         conciliacao_base_df.loc[conciliacao_base_df['Lançou'] == 0, colunas_relevantes]
@@ -176,22 +179,87 @@ def soma_exata():
         .copy()
     )
 
+    # Recebe de volta o resultado da conciliação tratada, as ades utilizadas, e os arquivos gerados
     conciliacao_retorno_soma, ades_tulizadas_soma, files_list_soma = metodo_soma(dados_cartao_para_alocar, d8_soma, folder)
+    # Coloca "vazio" nas linhas de ADE que não achou nada
     conciliacao_retorno_soma['ADE'] = conciliacao_retorno_soma['ADE'].fillna('')
 
+    # Aumenta a lista de ADEs usadas para não correr o risco de utilizá-las novamente
     total_ades_usadas.extend(ades_tulizadas_soma)
     files_list.extend(files_list_soma)
 
-    d8_para_emprestimo = d8_soma[~d8_soma['Contrato'].isin(total_ades_usadas)]
-    conciliacao_para_emprestimo = conciliacao_retorno_soma[conciliacao_retorno_soma['ADE'] == '']
+    d8_para_contrato = d8_soma[~d8_soma['Contrato'].isin(total_ades_usadas)]
+    conciliacao_para_contrato = conciliacao_retorno_soma[conciliacao_retorno_soma['ADE'] == '']
 
-    # Máscara para vazios
-    '''mask_sem_ade = conciliacao_para_emprestimo['ADE'] == ''
+    # prepara_contratos(d8_ades_amenos, conciliacao_base_df)
+    prepara_contratos(d8_para_contrato, conciliacao_para_contrato)
 
-    print(f'Quantos Vazios no conciliação_para_emprestimo: {mask_sem_ade.sum()}')'''
 
-    '''print(f'Comprimento D8 SOMA: {len(d8_soma)}')
-    print(f'Comprimento d8_para_emprestimo: {len(d8_para_emprestimo)}')'''
+def prepara_contratos(d8_vindo_de_soma,
+                      conciliacao_de_soma):
+    """
+    Usa os contratos encontrados para mapear ADEs em um novo conjunto de dados.
+
+    Args:
+        d8_vindo_de_soma: DataFrame D8 restante da etapa anterior.
+        conciliacao_de_soma: DataFrame de conciliação restante da etapa anterior.
+
+    Returns:
+        (pd.DataFrame, pd.DataFrame, list): Retorna os DataFrames D8 e de conciliação
+                                             prontos para a próxima etapa, e a lista
+                                             total de ADEs utilizadas atualizada.
+    """
+    print("--- INICIANDO ETAPA DE MAPEAMENTO DE CONTRATOS PARA ADEs ---")
+
+    # 1. ENCONTRAR CORRESPONDÊNCIAS
+    # A função trata_contratos cria o mapeamento entre contratos "sujos" e "limpos"
+    # O resultado é o D8 com as colunas 'Contrato_Encontrado_X'
+    df_codigos_tratados = trata_contratos(d8_vindo_de_soma, conciliacao_de_soma, folder)
+    # print(f'Comprimento do df_codigos_tratados: {len(df_codigos_tratados)}')
+    # print(f'Comprimento do conciliacao_de_soma: {len(conciliacao_de_soma)}')
+
+    # 2. CRIAR O MAPA: CONTRATO LIMPO -> ADE
+    # Este mapa será usado para enriquecer outros dados
+    print("Criando mapa de Contrato Limpo -> ADE...")
+    mapa_contrato_para_ade = {}
+    colunas_contratos = [col for col in df_codigos_tratados.columns if 'Contrato_Encontrado_' in col]
+
+    # CORREÇÃO: Adicionado .iterrows()
+    for _, row in df_codigos_tratados.iterrows():
+        ade = row['Contrato']  # 'Contrato' no D8 é a ADE
+        for col in colunas_contratos:
+            contrato_encontrado = row.get(col)
+            if pd.notna(contrato_encontrado):
+                # Mapeia o contrato limpo (encontrado) para a sua ADE correspondente
+                mapa_contrato_para_ade[str(contrato_encontrado).strip()] = ade
+
+    # print(f'Comprimento do df_codigos_tratados: {len(df_codigos_tratados)}')
+
+    # 3. APLICAR O MAPA EM OUTRO CONJUNTO DE DADOS
+    # CORREÇÃO: Usa o DataFrame 'conciliacao_de_soma' que veio como argumento,
+    # em vez de recarregar tudo.
+    print("Aplicando mapa para encontrar ADEs nos contratos com 'Lançou == 0'...")
+    print(f'Comprimento do conciliacao_de_soma == 1: {len(conciliacao_de_soma[conciliacao_de_soma['Lançou'] != 0])}')
+    dados_para_alocar_ade = conciliacao_de_soma[conciliacao_de_soma['Lançou'] == 0].copy()
+    # print(f'Comprimento do dados_para_alocar_ade: {len(dados_para_alocar_ade)}')
+
+    # Usa o mapa para preencher a coluna 'ADE'
+    dados_para_alocar_ade['ADE'] = dados_para_alocar_ade['CONTRATO'].astype(str).str.strip().map(mapa_contrato_para_ade)
+
+    # 4. PREPARAR DADOS PARA A PRÓXIMA ETAPA
+    print("Preparando dados para a próxima etapa (Empréstimo)...")
+
+    # Atualiza a lista de ADEs utilizadas com as que acabamos de encontrar
+    ades_encontradas_nesta_etapa = dados_para_alocar_ade['ADE'].dropna().unique().tolist()
+    total_ades_usadas.extend(ades_encontradas_nesta_etapa)
+
+    # Filtra o D8 para a próxima função, removendo as ADEs utilizadas
+    d8_para_emprestimo = d8_vindo_de_soma[~d8_vindo_de_soma['Contrato'].isin(total_ades_usadas)]
+
+    # CORREÇÃO: Filtra os contratos que AINDA não têm ADE usando .isna()
+    conciliacao_para_emprestimo = dados_para_alocar_ade[dados_para_alocar_ade['ADE'].isna()]
+
+    dados_para_alocar_ade.to_excel(fr'{folder}\Dados de Averbação - Contratos achados.xlsx', index=False)
 
     prepara_emprestimo(d8_para_emprestimo, conciliacao_para_emprestimo)
 
@@ -396,9 +464,16 @@ def processar_alocacao_ade(dados, d8, modalidade):
 
 # Funcao que concatena todos os arquivos
 def concatena_resultados():
-    df_averbacao_unficada = pd.concat([pd.read_excel(arquivo) for arquivo in files_list], ignore_index=True)
+    df_averbacao_unificada = pd.concat([pd.read_excel(arquivo) for arquivo in files_list], ignore_index=True)
 
-    df_averbacao_unficada.to_excel(fr'{folder}\DADOS DE AVERBAÇÃO UNIFICADAS.xlsx', index=False)
+    # É necessário tirar as células vazias da coluna 'ADE'
+    df_averbacao_unificada['ADE'] = df_averbacao_unificada['ADE'].fillna('')
+    df_averbacao_unificada_sem_vazios = df_averbacao_unificada[df_averbacao_unificada['ADE'] != '']
+
+    print(f"Tá vazio? {df_averbacao_unificada.loc[38364, 'ADE'] == ''}")
+
+    df_averbacao_unificada_sem_vazios.to_excel(fr'{folder}\DADOS DE AVERBAÇÃO UNIFICADAS SEM VAZIOS.xlsx', index=False)
+    df_averbacao_unificada.to_excel(fr'{folder}\DADOS DE AVERBAÇÃO UNIFICADAS.xlsx', index=False)
 
 
 # Executa a função principal

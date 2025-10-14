@@ -193,6 +193,9 @@ def metodo_soma(conciliacao, d8, folder):
                     # Isso significa que nenhuma combinação foi encontrada para os itens restantes deste CPF
                     break
 
+        # Faz uma copia sem ADEs vazias para juntar no módulo main.py
+        conciliacao_tratado_sem_vazios = conciliacao_tratado[~(conciliacao_tratado['ADE'].isna()) | ~(conciliacao_tratado['ADE'] == '')]
+
         # 7. Salvar Resultado (fora do loop de CPF)
         caminho_saida = fr"{caminho}\Planilha_A_com_ADE_e_Tolerancia {produto}.xlsx"
         conciliacao_tratado.to_excel(caminho_saida, index=False)
@@ -205,8 +208,9 @@ def metodo_soma(conciliacao, d8, folder):
     soma_cpf_emprestimo(conciliacao, d8, folder)
 
     # Hora de retornar todos os arquivos
-    df_averbacao_unficada = pd.concat([pd.read_excel(arquivo) for arquivo in files_list], ignore_index=True)
+    df_averbacao_unificada = pd.concat([pd.read_excel(arquivo) for arquivo in files_list], ignore_index=True)
     nome_arquivo_metodo_soma = fr'{folder}\DADOS DE AVERBAÇÃO UNIFICADAS METODO SOMA.xlsx'
-    df_averbacao_unficada.to_excel(nome_arquivo_metodo_soma, index=False)
+    df_averbacao_unificada.to_excel(nome_arquivo_metodo_soma, index=False)
 
-    return df_averbacao_unficada, list(total_ades_usadas), list(files_list)
+
+    return df_averbacao_unificada, list(total_ades_usadas), list(files_list)
