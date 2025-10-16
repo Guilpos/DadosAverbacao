@@ -109,7 +109,7 @@ def separacao_conciliacao(credbase, conciliacao):
         & ~(conciliacao_atratar['Saldo'].fillna(float(-np.inf)) >= 0)
         ]
 
-
+    conciliacao_tratado.to_excel(fr'{folder}\CONCILIAÇÃO TRATADO GOV MA.xlsx', index=False)
     return conciliacao_tratado
 
 
@@ -171,7 +171,6 @@ def soma_exata():
     colunas_relevantes = ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO', 'Lançou']
 
     # prepara a conciliação separando apenas as colunas que vamos usar
-
     conciliacao_base_df = separacao_conciliacao(credbase_trabalhado, conciliacao_bruto)
     dados_cartao_para_alocar = (
         conciliacao_base_df.loc[conciliacao_base_df['Lançou'] == 0, colunas_relevantes]
@@ -239,9 +238,12 @@ def prepara_contratos(d8_vindo_de_soma,
     # CORREÇÃO: Usa o DataFrame 'conciliacao_de_soma' que veio como argumento,
     # em vez de recarregar tudo.
     print("Aplicando mapa para encontrar ADEs nos contratos com 'Lançou == 0'...")
-    print(f'Comprimento do conciliacao_de_soma == 1: {len(conciliacao_de_soma[conciliacao_de_soma['Lançou'] != 0])}')
-    dados_para_alocar_ade = conciliacao_de_soma[conciliacao_de_soma['Lançou'] == 0].copy()
-    # print(f'Comprimento do dados_para_alocar_ade: {len(dados_para_alocar_ade)}')
+    # print(f'Comprimento do conciliacao_de_soma == isna(): {len(conciliacao_de_soma[conciliacao_de_soma['Lançou'].isna()])}')
+    conciliacao_de_soma.to_excel(fr'CONCILIÇÃO DE SOMA PARA SABER O QUE ESTÁ EM LANÇOU.xlsx', index=False)
+
+    mask_conciliacao_zero_vazio = (conciliacao_de_soma['Lançou'] == 0) | (conciliacao_de_soma['Lançou'].isna())
+    dados_para_alocar_ade = conciliacao_de_soma[mask_conciliacao_zero_vazio].copy()
+    print(f'Comprimento do dados_para_alocar_ade: {len(dados_para_alocar_ade)}')
 
     # Usa o mapa para preencher a coluna 'ADE'
     dados_para_alocar_ade['ADE'] = dados_para_alocar_ade['CONTRATO'].astype(str).str.strip().map(mapa_contrato_para_ade)
@@ -258,8 +260,11 @@ def prepara_contratos(d8_vindo_de_soma,
 
     # CORREÇÃO: Filtra os contratos que AINDA não têm ADE usando .isna()
     conciliacao_para_emprestimo = dados_para_alocar_ade[dados_para_alocar_ade['ADE'].isna()]
+    caminho_saida_contratos = fr'{folder}\Dados de Averbação - Contratos achados.xlsx'
 
-    dados_para_alocar_ade.to_excel(fr'{folder}\Dados de Averbação - Contratos achados.xlsx', index=False)
+    dados_para_alocar_ade.to_excel(caminho_saida_contratos, index=False)
+
+    files_list.append(caminho_saida_contratos)
 
     prepara_emprestimo(d8_para_emprestimo, conciliacao_para_emprestimo)
 

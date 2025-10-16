@@ -79,6 +79,7 @@ def trata_contratos(d8_do_main, conciliacao_do_main, caminho):
 
         # --- Passo 3: Aplicar a função e criar as novas colunas (sem alterações) ---
         print("Analisando a Planilha A e extraindo os contratos...")
+        df_sujo['Cod na Instituição'] = df_sujo['Cod na Instituição'].astype(str).str.replace('nan', '')
         lista_de_contratos_encontrados = df_sujo.apply(encontrar_contratos_na_linha, axis=1)
 
         df_contratos_novos = pd.DataFrame(lista_de_contratos_encontrados.tolist(), index=df_sujo.index)
