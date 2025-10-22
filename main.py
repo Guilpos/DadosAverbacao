@@ -167,6 +167,20 @@ def prepara_cartao(caminho_retorno_cartao: str,
 def soma_exata():
     d8_ades_amenos = pd.read_csv(planilha_d8_geral, encoding="ISO-8859-1", sep=";", on_bad_lines="skip")
     d8_soma = d8_ades_amenos[~d8_ades_amenos['Contrato'].isin(total_ades_usadas)]
+    d8_soma = d8_soma.copy()
+    d8_soma['Valor original'] = d8_soma['Valor original'].astype(str).str.replace(".", "").copy()
+    d8_soma['Valor original'] = d8_soma['Valor original'].astype(str).str.replace(",", ".")
+    d8_soma['Valor original'] = d8_soma['Valor original'].astype(float)
+    d8_previdencia = d8_soma[
+        ~(
+                (d8_soma['Serviço'] == 'Previdência') &
+                (
+                        (d8_soma['Valor original'] <= 20) |
+                        (d8_soma['Valor original'].isin([40, 60]))
+                )
+        )
+    ]
+    # print(f'd8_previdencia:\n{d8_previdencia}')
 
     colunas_relevantes = ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO', 'Lançou']
 
@@ -179,7 +193,7 @@ def soma_exata():
     )
     print(f'dados cartao para alocar :\n{dados_cartao_para_alocar['PRODUTO'].unique()}')
     # Recebe de volta o resultado da conciliação tratada, as ades utilizadas, e os arquivos gerados
-    conciliacao_retorno_soma, ades_tulizadas_soma, files_list_soma = metodo_soma(dados_cartao_para_alocar, d8_soma, folder)
+    conciliacao_retorno_soma, ades_tulizadas_soma, files_list_soma = metodo_soma(dados_cartao_para_alocar, d8_previdencia, folder)
 
     # Coloca "vazio" nas linhas de ADE que não achou nada
     conciliacao_retorno_soma['ADE'] = conciliacao_retorno_soma['ADE'].fillna('')
@@ -189,7 +203,7 @@ def soma_exata():
     total_ades_usadas.extend(ades_tulizadas_soma)
     files_list.extend(files_list_soma)
 
-    d8_para_contrato = d8_soma[~d8_soma['Contrato'].isin(total_ades_usadas)]
+    d8_para_contrato = d8_previdencia[~d8_previdencia['Contrato'].isin(total_ades_usadas)]
     conciliacao_para_contrato = conciliacao_retorno_soma[conciliacao_retorno_soma['ADE'] == '']
 
     # prepara_contratos(d8_ades_amenos, conciliacao_base_df)
@@ -200,6 +214,7 @@ def prepara_contratos(d8_vindo_de_soma,
                       conciliacao_de_soma):
     """
     Usa os contratos encontrados para mapear ADEs em um novo conjunto de dados.
+    Agora, mapeia múltiplos ADEs para um único contrato e duplica as linhas conforme necessário.
 
     Args:
         d8_vindo_de_soma: DataFrame D8 restante da etapa anterior.
@@ -212,34 +227,45 @@ def prepara_contratos(d8_vindo_de_soma,
     """
     print("--- INICIANDO ETAPA DE MAPEAMENTO DE CONTRATOS PARA ADEs ---")
 
-    # 1. ENCONTRAR CORRESPONDÊNCIAS
-    # A função trata_contratos cria o mapeamento entre contratos "sujos" e "limpos"
-    # O resultado é o D8 com as colunas 'Contrato_Encontrado_X'
+    # 1. ENCONTRAR CORRESPONDÊNCIAS (Sem alterações)
     df_codigos_tratados = trata_contratos(d8_vindo_de_soma, conciliacao_de_soma, folder)
     # print(f'Comprimento do df_codigos_tratados: {len(df_codigos_tratados)}')
     # print(f'Comprimento do conciliacao_de_soma: {len(conciliacao_de_soma)}')
 
-    # 2. CRIAR O MAPA: CONTRATO LIMPO -> ADE
-    # Este mapa será usado para enriquecer outros dados
-    print("Criando mapa de Contrato Limpo -> ADE...")
-    mapa_contrato_para_ade = {}
+    # 2. CRIAR O MAPA: CONTRATO LIMPO -> [LISTA DE ADEs]
+    print("Criando mapa de Contrato Limpo -> [LISTA DE ADEs]...")
+
+    # << --- ALTERAÇÃO INÍCIO --- >>
+    # O mapa agora armazenará listas de ADEs, usando um set para evitar duplicatas
+    mapa_contrato_para_ades = {}
     colunas_contratos = [col for col in df_codigos_tratados.columns if 'Contrato_Encontrado_' in col]
 
-    # CORREÇÃO: Adicionado .iterrows()
     for _, row in df_codigos_tratados.iterrows():
         ade = row['Contrato']  # 'Contrato' no D8 é a ADE
+        if pd.isna(ade):
+            continue  # Pula se a própria ADE for nula
+
         for col in colunas_contratos:
             contrato_encontrado = row.get(col)
             if pd.notna(contrato_encontrado):
-                # Mapeia o contrato limpo (encontrado) para a sua ADE correspondente
-                mapa_contrato_para_ade[str(contrato_encontrado).strip()] = ade
+                contrato_limpo = str(contrato_encontrado).strip()
+
+                # Se for a primeira vez que vemos este contrato, cria um set
+                if contrato_limpo not in mapa_contrato_para_ades:
+                    mapa_contrato_para_ades[contrato_limpo] = {ade}
+                # Se já existe, apenas adiciona a ADE ao set (duplicatas são ignoradas)
+                else:
+                    mapa_contrato_para_ades[contrato_limpo].add(ade)
+
+    # Converte os sets de volta para listas para o mapeamento
+    mapa_contrato_para_ades_listas = {k: list(v) for k, v in mapa_contrato_para_ades.items()}
+    # << --- ALTERAÇÃO FIM --- >>
 
     # print(f'Comprimento do df_codigos_tratados: {len(df_codigos_tratados)}')
 
-    # 3. APLICAR O MAPA EM OUTRO CONJUNTO DE DADOS
-    # CORREÇÃO: Usa o DataFrame 'conciliacao_de_soma' que veio como argumento,
-    # em vez de recarregar tudo.
-    print("Aplicando mapa para encontrar ADEs nos contratos com 'Lançou == 0'...")
+    # 3. APLICAR O MAPA E "EXPLODIR" AS LINHAS
+    print("Aplicando mapa e duplicando linhas para múltiplos ADEs...")
+    # (Seus prints de depuração)
     # print(f'Comprimento do conciliacao_de_soma == isna(): {len(conciliacao_de_soma[conciliacao_de_soma['Lançou'].isna()])}')
     conciliacao_de_soma.to_excel(fr'CONCILIÇÃO DE SOMA PARA SABER O QUE ESTÁ EM LANÇOU.xlsx', index=False)
 
@@ -247,24 +273,37 @@ def prepara_contratos(d8_vindo_de_soma,
     dados_para_alocar_ade = conciliacao_de_soma[mask_conciliacao_zero_vazio].copy()
     print(f'Comprimento do dados_para_alocar_ade: {len(dados_para_alocar_ade)}')
 
-    # Usa o mapa para preencher a coluna 'ADE'
-    dados_para_alocar_ade['ADE'] = dados_para_alocar_ade['CONTRATO'].astype(str).str.strip().map(mapa_contrato_para_ade)
+    # print(f'MAPA CONTRATOS: {mapa_contrato_para_ades_listas}') # Alterado para o novo nome do mapa
+
+    # << --- ALTERAÇÃO INÍCIO --- >>
+    # 3.1. Usa o mapa para preencher a coluna 'ADE'. Agora, esta coluna conterá LISTAS.
+    dados_para_alocar_ade['ADE'] = dados_para_alocar_ade['CONTRATO'].astype(str).str.strip().map(
+        mapa_contrato_para_ades_listas)
+
+    # 3.2. A MÁGICA: "Explode" a coluna 'ADE', duplicando as linhas para cada item da lista.
+    #      Linhas onde 'ADE' era NaN (contrato não encontrado) serão preservadas com NaN.
+    dados_para_alocar_ade_explodido = dados_para_alocar_ade.explode('ADE')
+
+    print(f'Comprimento após "explode": {len(dados_para_alocar_ade_explodido)}')
+    # << --- ALTERAÇÃO FIM --- >>
 
     # 4. PREPARAR DADOS PARA A PRÓXIMA ETAPA
+    #    (Agora usando o DataFrame 'explodido')
     print("Preparando dados para a próxima etapa (Empréstimo)...")
 
     # Atualiza a lista de ADEs utilizadas com as que acabamos de encontrar
-    ades_encontradas_nesta_etapa = dados_para_alocar_ade['ADE'].dropna().unique().tolist()
+    ades_encontradas_nesta_etapa = dados_para_alocar_ade_explodido['ADE'].dropna().unique().tolist()
     total_ades_usadas.extend(ades_encontradas_nesta_etapa)
 
     # Filtra o D8 para a próxima função, removendo as ADEs utilizadas
     d8_para_emprestimo = d8_vindo_de_soma[~d8_vindo_de_soma['Contrato'].isin(total_ades_usadas)]
 
-    # CORREÇÃO: Filtra os contratos que AINDA não têm ADE usando .isna()
-    conciliacao_para_emprestimo = dados_para_alocar_ade[dados_para_alocar_ade['ADE'].isna()]
+    # Filtra os contratos que AINDA não têm ADE usando .isna()
+    conciliacao_para_emprestimo = dados_para_alocar_ade_explodido[dados_para_alocar_ade_explodido['ADE'].isna()]
     caminho_saida_contratos = fr'{folder}\Dados de Averbação - Contratos achados.xlsx'
 
-    dados_para_alocar_ade.to_excel(caminho_saida_contratos, index=False)
+    # Salva o resultado "explodido"
+    dados_para_alocar_ade_explodido.to_excel(caminho_saida_contratos, index=False)
 
     files_list.append(caminho_saida_contratos)
 
@@ -272,7 +311,7 @@ def prepara_contratos(d8_vindo_de_soma,
 
 def prepara_emprestimo(geral_d8, conciliacao_soma_exata):
     d8_geral = geral_d8
-    d8_geral_reduzido = d8_geral.loc[d8_geral['Serviço'] == 'Empréstimo Consignado',['Matrícula', 'CPF', 'Nome', 'Contrato', 'Serviço', 'Valor original']]
+    d8_geral_reduzido = d8_geral.loc[d8_geral['Serviço'].isin(['Empréstimo Consignado', 'Previdência']),['Matrícula', 'CPF', 'Nome', 'Contrato', 'Serviço', 'Valor original']]
 
     d8_geral_colunas_novas = d8_geral_reduzido.rename(columns={'Matrícula': 'MATRÍCULA', 'Nome': 'NOME', 'Contrato': 'ADE', 'Valor original': 'PARCELA'})
 
@@ -290,12 +329,11 @@ def prepara_emprestimo(geral_d8, conciliacao_soma_exata):
 
 def prepara_beneficio(geral_d8, conciliacao_soma_exata):
     d8_geral = geral_d8
-    d8_geral_reduzido = d8_geral.loc[d8_geral['Serviço'] == 'Cartão Benefício',['Matrícula', 'CPF', 'Nome', 'Contrato', 'Serviço', 'Valor original']]
+    d8_geral_reduzido = d8_geral.loc[d8_geral['Serviço'].isin(['Cartão Benefício', 'Previdência']),['Matrícula', 'CPF', 'Nome', 'Contrato', 'Serviço', 'Valor original']]
 
     d8_geral_colunas_novas = d8_geral_reduzido.rename(columns={'Matrícula': 'MATRÍCULA', 'Nome': 'NOME', 'Contrato': 'ADE', 'Valor original': 'PARCELA'})
 
-    conciliacao = conciliacao_soma_exata.loc[
-            conciliacao_soma_exata['PRODUTO'] == 'Cartão Benefício', ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO']].copy()
+    conciliacao = conciliacao_soma_exata.loc[conciliacao_soma_exata['PRODUTO'] == 'Cartão Benefício', ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO']].copy()
 
     # total_ades_usadas = []
 
@@ -311,7 +349,7 @@ def prepara_beneficio(geral_d8, conciliacao_soma_exata):
 
 def prepara_cartao_nao_lancado(geral_d8, conciliacao_soma_exata):
     d8_geral = geral_d8
-    d8_geral_reduzido = d8_geral.loc[d8_geral['Serviço'] == 'Cartão de Crédito',['Matrícula', 'CPF', 'Nome', 'Contrato', 'Serviço', 'Valor original']]
+    d8_geral_reduzido = d8_geral.loc[d8_geral['Serviço'].isin(['Cartão de Crédito', 'Previdência']),['Matrícula', 'CPF', 'Nome', 'Contrato', 'Serviço', 'Valor original']]
 
     d8_geral_colunas_novas = d8_geral_reduzido.rename(columns={'Matrícula': 'MATRÍCULA', 'Nome': 'NOME', 'Contrato': 'ADE', 'Valor original': 'PARCELA'})
 
@@ -358,6 +396,7 @@ def prepara_resto(geral_d8, conciliacao_cartao_nao_lancado):
     # Junta todos os DataFrames
     concatena_resultados()
 
+
 def processar_alocacao_ade(dados, d8, modalidade):
     """
     Aloca ADEs da planilha d8 para a planilha dados com base no CPF e valor da parcela,
@@ -378,16 +417,37 @@ def processar_alocacao_ade(dados, d8, modalidade):
     df_dados['CPF'] = df_dados['CPF'].astype(str)
     df_d8['CPF'] = df_d8['CPF'].astype(str)
 
-    # Garante que parcela em df_d8 é número
-    df_d8['PARCELA'] = df_d8['PARCELA'].astype(str).str.replace(".", "")
-    df_d8['PARCELA'] = df_d8['PARCELA'].astype(str).str.replace(",", ".")
-    df_d8['PARCELA'] = df_d8['PARCELA'].astype(float)
+    # print(f'df_d8 ADE:\n{df_d8.loc[df_d8['ADE'] == 407459]}')
+    # print(f'df_d8 CPF:\n{df_d8.loc[df_d8['CPF'] == '281.060.323-53']}')
+
+    # << --- ALTERAÇÃO 1: Limpeza robusta da 'PARCELA' (d8) --- >>
+    # Remove a condição 'if not np.issubdtype'
+    # Esta forma incondicional é mais segura para garantir que os dados estejam limpos.
+    if not np.issubdtype(df_d8['PARCELA'].dtype, np.floating):
+        df_d8['PARCELA'] = (
+            df_d8['PARCELA']
+            .astype(str)
+            .str.replace('.', '', regex=False)
+            .str.replace(',', '.', regex=False)
+            .astype(float)
+        )
+
+    # << --- ALTERAÇÃO 2: Adiciona limpeza da 'PRESTAÇÃO' (dados) --- >>
+    # Se a 'PRESTAÇÃO' for uma string "434,00", a lógica falha.
+    if not np.issubdtype(df_dados['PRESTAÇÃO'].dtype, np.floating):
+        df_dados['PRESTAÇÃO'] = (
+            df_dados['PRESTAÇÃO']
+            .astype(str)
+            .str.replace('.', '', regex=False)
+            .str.replace(',', '.', regex=False)
+            .astype(float)
+        )
+    print(f'Dados: {df_dados.loc[df_dados['CPF'] == '281.060.323-53']}')
+
     '''if modalidade == 'RESTO':
         print(f'D8 DE RESTO:\n{df_d8}')'''
-    # df_d8['PARCELA'] = pd.to_numeric(df_d8['PARCELA'], errors='coerce')
 
     # Agrupa os dados da d8 por CPF para fácil acesso
-    # Cria um dicionário: {cpf: [{ade: X, parcela: Y, saldo: Y}, ...]}
     d8_agrupado = {}
     for _, row in df_d8.iterrows():
         cpf = row['CPF']
@@ -399,79 +459,92 @@ def processar_alocacao_ade(dados, d8, modalidade):
             'saldo': row['PARCELA']  # Saldo inicial é o valor total da parcela
         })
 
-    # print(d8_agrupado['004.436.613-24'])
+    # Este é o seu print mais importante. Verifique o resultado dele.
+    # print(f"d8 agrupado: {d8_agrupado.get('281.060.323-53')}")
 
     # Lista para armazenar os resultados
     dados_resultado = []
-
-    # Dicionário para rastrear o índice da ADE atual para cada CPF
     ade_tracker = {cpf: 0 for cpf in d8_agrupado.keys()}
-
-    # NOVO: Conjunto para guardar as ADEs que foram de fato utilizadas
+    # print(ade_tracker.get('281.060.323-53'))
     ades_utilizadas = set()
 
     # Itera sobre cada linha da planilha "dados"
     for _, row in df_dados.iterrows():
         cpf = row['CPF']
-        parcela_a_cobrir = row['PRESTAÇÃO']
+        parcela_a_cobrir = row['PRESTAÇÃO']  # Agora é um float limpo
+        # 1. Verifica se o CPF da linha atual é o que você está procurando
+        '''if cpf == '281.060.323-53':
+            # 2. Se for, imprime as informações daquela linha
+            print(f"--- DEBUG: Encontrado CPF 281.060.323-53 ---")
+            print(f"CPF: {cpf}, Parcela a Cobrir: {parcela_a_cobrir}")'''
+            # Você pode adicionar mais prints aqui se quiser, ex:
+            # print(f"Dados do D8 para este CPF: {d8_agrupado.get(cpf)}")
+
+        # << --- VERIFICAÇÃO IMPORTANTE --- >>
+        # Se a prestação for NaN (talvez fosse um texto inválido), pula a linha.
+        if pd.isna(parcela_a_cobrir):
+            nova_linha = row.to_dict()
+            nova_linha['ADE'] = 'Prestação Inválida ou Nula'
+            dados_resultado.append(nova_linha)
+            continue
 
         if cpf not in d8_agrupado:
-            # CPF não existe na d8, adiciona a linha com um aviso
             nova_linha = row.to_dict()
             nova_linha['ADE'] = 'CPF não encontrado em d8'
-            # nova_linha['ADE'] = row['CONTRATO']
             dados_resultado.append(nova_linha)
             continue
 
         ades_disponiveis = d8_agrupado[cpf]
 
-        while parcela_a_cobrir > 0.01:  # Tolerância para ponto flutuante
+        # (Seu print de debug)
+        # ade_especifica = next((ade for ade in ades_disponiveis if ade['ADE'] == '407459'), None)
+        # if ade_especifica is not None:
+        #     print(f'ade_especifica: {ade_especifica}')
+
+        # --- A LÓGICA DE LOOP ABAIXO ESTÁ CORRETA ---
+        # Ela já lida com a divisão da parcela em múltiplas ADEs.
+        while parcela_a_cobrir > 0.01:
             idx_ade_atual = ade_tracker.get(cpf, 0)
 
             if idx_ade_atual >= len(ades_disponiveis):
-                # Não há mais ADEs para cobrir o valor
                 linha_artificial = row.to_dict()
-                linha_artificial['PRESTAÇÃO'] = parcela_a_cobrir  # Valor que faltou
-                # linha_artificial['ADE'] = 'ADEs insuficientes em d8'
-                linha_artificial['ADE'] = row['CONTRATO']
+                linha_artificial['PRESTAÇÃO'] = parcela_a_cobrir
+                linha_artificial['ADE'] = 'ADEs insuficientes em d8'
                 dados_resultado.append(linha_artificial)
                 break
 
             ade_atual = ades_disponiveis[idx_ade_atual]
 
-            # Valor que pode ser coberto por esta ADE
+            # Se o saldo da ADE atual for NaN, pula para a próxima
+            if pd.isna(ade_atual['saldo']):
+                ade_tracker[cpf] += 1
+                continue
+
             valor_a_alocar = min(parcela_a_cobrir, ade_atual['saldo'])
 
             if valor_a_alocar > 0.01:
                 linha_artificial = row.to_dict()
-                # A parcela na nova linha é o valor que foi efetivamente coberto
                 linha_artificial['PRESTAÇÃO'] = valor_a_alocar
                 linha_artificial['ADE'] = ade_atual['ADE']
                 dados_resultado.append(linha_artificial)
 
-                # NOVO: Adiciona a ADE à nossa lista de utilizadas
                 ades_utilizadas.add(ade_atual['ADE'])
 
-                # Atualiza os saldos e valores
                 ade_atual['saldo'] -= valor_a_alocar
                 parcela_a_cobrir -= valor_a_alocar
 
-            # Se o saldo da ADE zerou, move para a próxima
             if ade_atual['saldo'] < 0.01:
                 ade_tracker[cpf] += 1
 
-    # Cria o DataFrame final a partir da lista de resultados
     df_resultado = pd.DataFrame(dados_resultado)
 
-    # Salva o resultado em uma nova planilha no mesmo arquivo Excel
     nome_arquivo = fr"{folder}\Dados de Averbacao Tratado {modalidade}.xlsx"
     df_resultado.to_excel(nome_arquivo, index=False)
     files_list.append(nome_arquivo)
     d8.to_excel(fr'{folder}\D8 ROBO.xlsx', index=False)
 
-    print(f"Processo  de {modalidade} concluído com sucesso! Verifique a planilha 'Dados de Averbacao Tratado {modalidade}' no seu arquivo.")
+    print(f"Processo de {modalidade} concluído com sucesso!")
 
-    # NOVO: Retorna a lista de ADEs e o df_resultado
     return list(ades_utilizadas), df_resultado
 
 # Funcao que concatena todos os arquivos

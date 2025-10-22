@@ -93,12 +93,13 @@ def metodo_soma(conciliacao, d8, folder):
         conciliacao_tratado['CPF'] = conciliacao_tratado['CPF'].astype(str).str.strip()
         d8_geral['CPF'] = d8_geral['CPF'].astype(str).str.strip()
         conciliacao_tratado['PRESTAÇÃO'] = pd.to_numeric(conciliacao_tratado['PRESTAÇÃO'], errors='coerce')
-        print(f'Parcelas da conciliação: {conciliacao_tratado['PRESTAÇÃO']}')
+        # print(f'Parcelas da conciliação: {conciliacao_tratado.loc[conciliacao_tratado['CPF'] == '281.060.323-53', ['PRESTAÇÃO']]}')
 
-        print(f'Parcelas do D8: {d8_geral}')
-        d8_geral['Valor original'] = d8_geral['Valor original'].astype(str).str.replace(".", "")
-        d8_geral['Valor original'] = d8_geral['Valor original'].astype(str).str.replace(",", ".")
+        # print(f'Parcelas do D8: {d8_geral.loc[d8_geral['CPF'] == '281.060.323-53', ['Valor original']]}')
+        '''d8_geral['Valor original'] = d8_geral['Valor original'].astype(str).str.replace(".", "")
+        d8_geral['Valor original'] = d8_geral['Valor original'].astype(str).str.replace(",", ".")'''
         d8_geral['Valor original'] = pd.to_numeric(d8_geral['Valor original'], errors='coerce')
+        # print(f'Parcelas do D8: {d8_geral['Valor original']}')
 
         conciliacao_tratado.dropna(subset=['CPF', 'PRESTAÇÃO'], inplace=True)
 
