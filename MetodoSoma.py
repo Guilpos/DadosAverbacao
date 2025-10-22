@@ -71,7 +71,7 @@ def metodo_soma(conciliacao, d8, folder):
         # total_ades_usadas = []
 
         conciliacao_encontrados = conciliacao.loc[
-            conciliacao['PRODUTO'] == 'Cartão de Crédito', ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO',
+            conciliacao['PRODUTO'] == '-', ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO',
                                                             'AVERBAÇÃO - ATUALIZADA', 'PRODUTO']]
 
         ades_usadas_cartao = soma_por_cpf(conciliacao_encontrados, d8, 'RESTO',caminho)
@@ -137,6 +137,15 @@ def metodo_soma(conciliacao, d8, folder):
                 print(f"Processando CPF {i + 1}/{total_cpfs}...")'''
 
             if cpf not in b_lookup:
+                # Se o CPF da conciliação não existe no D8...
+
+                # 1. Encontra os índices de todas as linhas com este CPF na conciliação
+                indices_para_marcar = conciliacao_tratado[conciliacao_tratado['CPF'] == cpf].index
+
+                # 2. Atualiza a coluna 'ADE' para essas linhas com a mensagem de status
+                conciliacao_tratado.loc[indices_para_marcar, 'ADE'] = 'CPF não encontrado no D8'
+
+                # 3. Agora sim, pula para o próximo CPF
                 continue
 
             itens_a_combinar = list(conciliacao_tratado[conciliacao_tratado['CPF'] == cpf][['PRESTAÇÃO']].itertuples())

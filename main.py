@@ -137,7 +137,7 @@ def prepara_cartao(caminho_retorno_cartao: str,
 
     d8_cartao_bruto_df = pd.read_csv(caminho_retorno_cartao, encoding="ISO-8859-1", sep=";", on_bad_lines="skip")
     conciliacao_base_df = separacao_conciliacao(credbase_trabalhado, conciliacao_bruto)
-
+    # print(f'conciliacao base:\n{conciliacao_base_df['PRODUTO'].unique()}')
 
     colunas_relevantes = ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO', 'Lançou']
     dados_cartao_para_alocar = (
@@ -177,11 +177,13 @@ def soma_exata():
         .sort_values(by=['CPF', 'AVERBAÇÃO - ATUALIZADA'], ascending=True)
         .copy()
     )
-
+    print(f'dados cartao para alocar :\n{dados_cartao_para_alocar['PRODUTO'].unique()}')
     # Recebe de volta o resultado da conciliação tratada, as ades utilizadas, e os arquivos gerados
     conciliacao_retorno_soma, ades_tulizadas_soma, files_list_soma = metodo_soma(dados_cartao_para_alocar, d8_soma, folder)
+
     # Coloca "vazio" nas linhas de ADE que não achou nada
     conciliacao_retorno_soma['ADE'] = conciliacao_retorno_soma['ADE'].fillna('')
+    # print(f'conciliacao retorno_soma:\n{conciliacao_retorno_soma['PRODUTO'].unique()}')
 
     # Aumenta a lista de ADEs usadas para não correr o risco de utilizá-las novamente
     total_ades_usadas.extend(ades_tulizadas_soma)
@@ -320,7 +322,7 @@ def prepara_cartao_nao_lancado(geral_d8, conciliacao_soma_exata):
 
     mask_credito_nao_lancado = (conciliacao['PRODUTO'] == 'Cartão de Crédito') & (conciliacao['Lançou'] != 1)
     conciliacao_encontrados = conciliacao.loc[mask_credito_nao_lancado]
-
+    # print(f'conciliacao soma_exata:\n{conciliacao_soma_exata['PRODUTO'].unique()}')
 
     ades_usadas_cartao = processar_alocacao_ade(conciliacao_encontrados, d8_geral_colunas_novas, 'CARTÃO NÃO LANÇADO')
 
@@ -331,20 +333,23 @@ def prepara_cartao_nao_lancado(geral_d8, conciliacao_soma_exata):
 
     prepara_resto(d8_final_restante, conciliacao_soma_exata)
 
-def prepara_resto(geral_d8, conciliacao_soma_exata):
+def prepara_resto(geral_d8, conciliacao_cartao_nao_lancado):
     d8_geral = geral_d8
-    d8_geral_reduzido = d8_geral.loc[
-        d8_geral['Serviço'] == 'Cartão de Crédito', ['Matrícula', 'CPF', 'Nome', 'Contrato', 'Serviço',
+
+    d8_geral_reduzido = d8_geral[['Matrícula', 'CPF', 'Nome', 'Contrato', 'Serviço',
                                                      'Valor original']]
+    print(f'Comprimento de D8 geral:\n{len(d8_geral)}')
 
     d8_geral_colunas_novas = d8_geral_reduzido.rename(
         columns={'Matrícula': 'MATRÍCULA', 'Nome': 'NOME', 'Contrato': 'ADE', 'Valor original': 'PARCELA'})
 
-    conciliacao = conciliacao_soma_exata
+    conciliacao = conciliacao_cartao_nao_lancado
     # total_ades_usadas = []
 
     conciliacao_encontrados = conciliacao.loc[conciliacao['PRODUTO'] == '-',
     ['CONTRATO', 'CPF', 'NOME', 'PRESTAÇÃO', 'AVERBAÇÃO - ATUALIZADA', 'PRODUTO', 'Lançou']]
+
+    # print(f'Conciliacao:\n{conciliacao_encontrados['PRODUTO'].unique()}')
 
     ades_usadas_cartao = processar_alocacao_ade(conciliacao_encontrados, d8_geral_colunas_novas, 'RESTO')
 
@@ -377,6 +382,8 @@ def processar_alocacao_ade(dados, d8, modalidade):
     df_d8['PARCELA'] = df_d8['PARCELA'].astype(str).str.replace(".", "")
     df_d8['PARCELA'] = df_d8['PARCELA'].astype(str).str.replace(",", ".")
     df_d8['PARCELA'] = df_d8['PARCELA'].astype(float)
+    '''if modalidade == 'RESTO':
+        print(f'D8 DE RESTO:\n{df_d8}')'''
     # df_d8['PARCELA'] = pd.to_numeric(df_d8['PARCELA'], errors='coerce')
 
     # Agrupa os dados da d8 por CPF para fácil acesso
